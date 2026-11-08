@@ -61,6 +61,75 @@ python app.py                 # CLI-меню
 python smoke_test.py          # ожидается «Итого: OK 20, FAIL 0»
 ```
 
+## Запуск на другой машине (после `git clone`)
+
+`venv`, `.env` и сама база в git не хранятся — на новой машине их нужно создать.
+Порядок важен: сначала база, потом таблицы.
+
+```powershell
+# 1. Проверить, что сервер этой машины работает
+Get-Service -Name '*postgres*'
+Test-NetConnection localhost -Port 5432
+
+# 2. Окружение и зависимости
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+
+# 3. Свой .env (пароль ЭТОЙ установки PostgreSQL)
+Copy-Item .env.example .env
+notepad .env
+
+# 4. Создать базу booking
+python ensure_database.py
+
+# 5. Создать таблицы и демо-данные
+python app.py          # при старте создаёт users, tables, bookings и индексы
+python seed_demo.py    # 3 пользователя, 3 стола, 2 брони (идемпотентно)
+```
+
+Почему два шага: `CREATE DATABASE` нельзя выполнить из подключения к самой создаваемой
+базе, поэтому `ensure_database.py` подключается к служебной `postgres`. Если базы нет,
+`app.py` завершится ошибкой `3D000` — тогда сначала шаг 4.
+
+`ensure_database.py` и `seed_demo.py` можно запускать повторно: существующую базу и
+записи они не дублируют.
+
+Ожидаемый результат после шага 5:
+
+```text
+Итог: пользователей 3, столов 3, броней 2
+```
+
+### Пересоздать базу с нуля
+
+Если база испорчена или нужна чистая:
+
+```powershell
+# 1. Удалить базу (активные подключения pgAdmin должны быть закрыты)
+& "C:\Program Files\PostgreSQL\18\bin\psql.exe" -U postgres `
+    -c "DROP DATABASE booking WITH (FORCE);"
+
+# 2. Создать заново и наполнить
+python ensure_database.py
+python seed_demo.py
+```
+
+То же мышкой в pgAdmin: правый клик по базе `booking` → *Delete/Drop* → подтвердить,
+затем снова `python ensure_database.py` и `python seed_demo.py`.
+
+`WITH (FORCE)` есть с PostgreSQL 13: он отключает активные сессии. На более старых
+версиях сначала закройте вкладки с базой в pgAdmin.
+
+### Сбросить только данные, не удаляя базу
+
+```sql
+TRUNCATE bookings, tables, users RESTART IDENTITY CASCADE;
+```
+
+`RESTART IDENTITY` начинает нумерацию `id` заново, `CASCADE` учитывает внешние ключи.
+После этого можно запустить `python seed_demo.py`.
+
 ## Схема базы
 
 ```text
